@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fileserver-httpd
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany # o servidor nfs aceita conexões de diversos locais (posso agora ter vários pods)
+  nfs:
+    path: /dados # nome do compartilhamento de arquivos
+    server: 10.251.175.10 # ip do nfs criado no gcp (disco ou servidor) ou qualquer outro provedor
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fileserver-httpd
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: '' # deixar em branco conforme documentação da gcp
+  volumeName: fileserver-httpd
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: otaviodioscanio/banco-k8s-projeto1-dio:1.0
+          imagePullPolicy: Always # caso atualize a imagem no DockerHub, atualizar no container
+          ports:
+            - containerPort: 3306
+          args:
+            - '--ignore-db-dir=lost+found'
+          volumeMounts:
+            - name: fileserver-http
+              mountPath: /var/lib/mysql/
+      volumes:
+        - name: fileserver-http
+          persistentVolumeClaim:
+            claimName: fileserver-http
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-connection
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: mysql
+  clusterIP: None
+# serviço que fará a conexão do banco com o backend, dentro do cluster
+# apenas service, não é load balancer ou node port
+# não terá ip externo
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: php
+  labels:
+    app: php
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: php
+  template:
+    metadata:
+      labels:
+        app: php
+    spec:
+      containers:
+        - name: php
+          image: otaviodioscanio/backend-k8s-projeto1-dio:1.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: php
+      #     volumeMounts:
+      #       - name: fileserver-http
+      #         mountPath: /usr/local/apache2/htdocs/
+      # volumes:
+      #   - name: fileserver-http
+      #     persistentVolumeClaim:
+      #       claimName: fileserver-http
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fileserver-httpd
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany # o servidor nfs aceita conexões de diversos locais (posso agora ter vários pods)
+  nfs:
+    path: /dados # nome do compartilhamento de arquivos
+    server: 10.251.175.10 # ip do nfs criado no gcp (disco ou servidor) ou qualquer outro provedor
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-php-lb-dio # nome do serviço
+spec:
+  selector:
+    app: php # aponta o aplicativo (app), não o deployment (metadata name)
+  ports:
+    - port: 80 # porta do container
+      targetPort: 80 # porta do loadbalancer
+  type: LoadBalancer
